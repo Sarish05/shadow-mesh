@@ -1,0 +1,23 @@
+syntax = "proto3";
+package shadowmesh;
+
+// SecurePacket: the only structure ever sent over the wire
+// contentType is always 0 — real type is hidden inside ciphertext
+message SecurePacket {
+  bytes  ciphertext    = 1;
+  bytes  iv            = 2;
+  uint32 content_type  = 3;
+  uint32 padded_size   = 4;
+  bytes  commitment    = 5;
+  uint64 expires_at    = 6;
+  uint32 seq           = 7;
+  uint32 total_chunks  = 8;
+}
+
+// Routing envelope — the only thing the relay/gateway sees
+message Envelope {
+  string recipient_token  = 1;
+  string sender_token     = 2;  // sealed: encrypted inside SecurePacket too
+  SecurePacket packet     = 3;
+  string action           = 4;  // "message" | "key_exchange" | "ack"
+}
