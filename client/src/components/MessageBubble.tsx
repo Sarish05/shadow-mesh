@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
 import { type ChatMessage } from '../store/chatStore';
-import { Play, Pause, Clock, ShieldCheck } from 'lucide-react';
+import { Play, Pause, Clock, ShieldCheck, Check, CheckCheck } from 'lucide-react';
 
 interface Props { msg: ChatMessage; }
 
@@ -27,53 +26,50 @@ export default function MessageBubble({ msg }: Props) {
   const isMine = msg.isMine;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.2 }}
-      className={`flex ${isMine ? 'justify-end' : 'justify-start'} mb-3 px-1`}
-    >
-      <div className={`flex flex-col gap-1 max-w-xs ${isMine ? 'items-end' : 'items-start'}`}>
-        {/* Sender tag */}
-        {!isMine && (
-          <span className="font-mono text-[10px] text-emerald-600 px-1 uppercase tracking-wider">
-            ◆ INCOMING · E2E VERIFIED
-          </span>
-        )}
+    <div className={`flex ${isMine ? 'justify-end' : 'justify-start'} mb-4`}>
+      <div className={`flex flex-col gap-1 max-w-[85%] md:max-w-md ${isMine ? 'items-end' : 'items-start'}`}>
 
-        {/* Bubble */}
-        <div className={`rounded-2xl px-4 py-3 text-sm wrap-break-word relative ${
-          isMine
-            ? 'bg-emerald-900/40 border border-emerald-700/40 text-emerald-100'
-            : 'bg-[#0d1117] border border-slate-700/50 text-slate-200'
+        <div className={`rounded-2xl px-4 py-3 text-sm shadow-sm ${
+          isMine ? 'bubble-mine rounded-tr-sm' : 'bubble-theirs rounded-tl-sm'
         }`}>
+
+          {/* Text */}
           {msg.contentType === 'text' && (
-            <p className="leading-relaxed">{msg.text}</p>
+            <p className="leading-relaxed whitespace-pre-wrap break-words text-[15px]">{msg.text}</p>
           )}
 
+          {/* Image */}
           {msg.contentType === 'image' && msg.imageUrl && (
-            <div className="space-y-2">
-              <div className="font-mono text-[10px] text-emerald-600 uppercase tracking-wider">
-                ◆ ENCRYPTED IMAGE · EXIF STRIPPED
-              </div>
-              <img src={msg.imageUrl} alt="decrypted" className="rounded-lg max-w-55 max-h-55 object-cover border border-emerald-900/30" />
+            <div>
+               <img
+                src={msg.imageUrl}
+                alt="decrypted image"
+                className="rounded-lg max-w-full max-h-[260px] object-cover"
+              />
             </div>
           )}
 
+          {/* Voice */}
           {msg.contentType === 'voice' && msg.audioUrl && (
-            <div className="flex items-center gap-3 min-w-45">
+            <div className="flex items-center gap-3 min-w-[160px]">
               <button
                 onClick={toggleAudio}
-                className="w-9 h-9 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center hover:bg-emerald-500/40 transition-colors shrink-0"
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors shrink-0 ${
+                  isMine ? 'bg-white/20 hover:bg-white/30 text-white' : 'bg-[var(--primary-dim)] hover:bg-[var(--bg-hover)] text-[var(--primary)]'
+                }`}
               >
-                {playing ? <Pause className="w-4 h-4 text-emerald-400" /> : <Play className="w-4 h-4 text-emerald-400" />}
+                {playing ? <Pause className="w-4 h-4 ml-0.5" /> : <Play className="w-4 h-4 ml-1" />}
               </button>
-              <div className="flex gap-px items-end flex-1">
-                {Array.from({ length: 28 }).map((_, i) => (
+              <div className="flex-1 flex gap-0.5 items-center h-8">
+                {/* Visualizer bars */}
+                {Array.from({ length: 24 }).map((_, i) => (
                   <div
                     key={i}
-                    className={`w-0.5 rounded-full transition-colors ${playing ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-800'}`}
-                    style={{ height: `${5 + Math.abs(Math.sin(i * 0.8)) * 14}px` }}
+                    className={`flex-1 rounded-full opacity-60 ${isMine ? 'bg-white' : 'bg-[var(--primary)]'}`}
+                    style={{
+                      height: `${20 + Math.abs(Math.sin(i * 0.9)) * 60}%`,
+                      animation: playing ? `pulse-glow ${0.5 + (i % 3) * 0.15}s ease-in-out infinite` : 'none'
+                    }}
                   />
                 ))}
               </div>
@@ -82,23 +78,35 @@ export default function MessageBubble({ msg }: Props) {
           )}
         </div>
 
-        {/* Meta */}
-        <div className={`flex items-center gap-2 px-1 ${isMine ? 'flex-row-reverse' : ''}`}>
-          <ShieldCheck className="w-3 h-3 text-emerald-700" />
-          <span className="font-mono text-[10px] text-slate-600">
+        {/* Footer row */}
+        <div className={`flex items-center gap-2 mt-1 px-1 ${isMine ? 'flex-row-reverse' : ''}`}>
+          <span className="text-[10px] text-[var(--text-muted)] tracking-wide">
             {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
+
           {msg.expiresAt > 0 && timeLeft !== null && (
-            <span className={`flex items-center gap-1 font-mono text-[10px] ${timeLeft < 10000 ? 'text-red-500' : 'text-amber-600'}`}>
-              <Clock className="w-3 h-3" />
-              {timeLeft > 0 ? `${Math.ceil(timeLeft / 1000)}s` : 'WIPED'}
+            <span className={`flex items-center gap-1 text-[10px] font-medium ${
+              timeLeft < 10000 ? 'text-[var(--danger)] animate-pulse' : 'text-[var(--text-secondary)]'
+            }`}>
+              <Clock className="w-2.5 h-2.5" />
+              {timeLeft > 0 ? `${Math.ceil(timeLeft / 1000)}s` : '0s'}
             </span>
           )}
+
           {isMine && (
-            <span className="font-mono text-[10px] text-emerald-800">AES-256-GCM ✓</span>
+             <span className="text-[10px] text-[var(--text-muted)]">
+             {msg.status === 'delivered' ? <CheckCheck className="w-3.5 h-3.5 text-[var(--primary)]" /> : <Check className="w-3.5 h-3.5" />}
+           </span>
+          )}
+
+          {!isMine && (
+            <div className="flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+               <ShieldCheck className="w-3 h-3 text-[var(--success)]" />
+            </div>
           )}
         </div>
+
       </div>
-    </motion.div>
+    </div>
   );
 }

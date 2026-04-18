@@ -1,0 +1,10 @@
+{
+  "name": "shadow-mesh",
+  "version": "1.0.0",
+  "scripts": {
+    "dev:relay": "cd relay && npm run dev",
+    "dev:gateway": "cd gateway && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "dev": "start cmd /k npm run dev:gateway && start cmd /k npm run dev:relay && npm run dev:client"
+  }
+}

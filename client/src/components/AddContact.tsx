@@ -1,89 +1,177 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useChatStore } from '../store/chatStore';
-import { X, UserPlus, Search } from 'lucide-react';
+import { UserPlus, X, ScanLine, XCircle, Check, Loader2, Search } from 'lucide-react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 
 interface Props { onClose: () => void; }
 
 export default function AddContact({ onClose }: Props) {
   const [pseudoId, setPseudoId] = useState('');
   const [relayToken, setRelayToken] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [dhPublicKey, setDhPublicKey] = useState('');
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanError, setScanError] = useState('');
+  const [lookingUp, setLookingUp] = useState(false);
+  const [lookupStatus, setLookupStatus] = useState<'idle' | 'found' | 'not-found'>('idle');
   const { addContact } = useChatStore();
 
-  async function handleAdd() {
+  useEffect(() => {
+    if (!isScanning) return;
+    const scanner = new Html5QrcodeScanner(
+      'qr-reader',
+      { fps: 10, qrbox: { width: 230, height: 230 }, aspectRatio: 1.0 },
+      false
+    );
+    scanner.render(
+      (decodedText) => {
+        try {
+          const data = JSON.parse(decodedText);
+          if (data.pseudoId && data.dhPublicKey && data.relayToken) {
+            setPseudoId(data.pseudoId);
+            setDhPublicKey(data.dhPublicKey);
+            setRelayToken(data.relayToken);
+            scanner.clear();
+            setIsScanning(false);
+            setLookupStatus('found');
+          } else {
+            setScanError('Invalid QR format');
+          }
+        } catch {
+          setScanError('Invalid QR data');
+        }
+      },
+      (error) => { console.warn(error); }
+    );
+    return () => { scanner.clear().catch(console.error); };
+  }, [isScanning]);
+
+  async function lookupCallsign() {
     if (!pseudoId.trim()) return;
-    setLoading(true); setError('');
+    setLookingUp(true);
+    setLookupStatus('idle');
     try {
-      const res = await fetch(`http://localhost:3002/api/identity/${pseudoId.trim().toUpperCase()}`);
-      if (!res.ok) throw new Error('Callsign not found on network');
-      const { publicKey } = await res.json() as { publicKey: string };
-      addContact({ pseudoId: pseudoId.trim().toUpperCase(), dhPublicKey: publicKey, relayToken: relayToken.trim() || undefined, displayName: pseudoId.trim().toUpperCase() });
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed');
-    } finally { setLoading(false); }
+      const res = await fetch(`http://localhost:3002/api/identity/${encodeURIComponent(pseudoId.trim())}`);
+      if (res.ok) {
+        const data = await res.json() as { publicKey: string };
+        setDhPublicKey(data.publicKey);
+        setLookupStatus('found');
+      } else {
+        setLookupStatus('not-found');
+      }
+    } catch {
+      setLookupStatus('not-found');
+    }
+    setLookingUp(false);
   }
 
-  return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-[#050a0e] border border-emerald-900/50 rounded-2xl p-6 w-full max-w-sm glow-green"
-      >
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2">
-            <UserPlus className="w-4 h-4 text-emerald-400" />
-            <span className="font-mono text-sm text-white font-semibold">ADD CONTACT</span>
-          </div>
-          <button onClick={onClose} className="text-slate-600 hover:text-slate-300 transition-colors"><X className="w-4 h-4" /></button>
-        </div>
+  function handleSave() {
+    if (!pseudoId || !dhPublicKey || !relayToken) return;
+    addContact({ pseudoId: pseudoId.trim(), dhPublicKey, relayToken: relayToken.trim() });
+    onClose();
+  }
 
-        <div className="space-y-3">
-          <div>
-            <label className="font-mono text-[10px] text-slate-500 uppercase tracking-widest mb-1.5 block">Operational Callsign</label>
-            <div className="flex gap-2">
-              <input
-                value={pseudoId}
-                onChange={e => setPseudoId(e.target.value.toUpperCase())}
-                placeholder="ALPHA7XKR9P2"
-                className="flex-1 bg-[#0a0f14] border border-slate-700/50 rounded-lg px-3 py-2.5 text-white font-mono text-sm placeholder:text-slate-700 focus:outline-none focus:border-emerald-600 transition-colors"
-              />
+  const canSave = pseudoId.trim() && dhPublicKey && relayToken.trim();
+
+  return (
+    <div className="modal-overlay">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="modal-panel"
+      >
+        <div className="modal-header">
+          <div className="modal-title-row">
+            <div className="modal-title-icon">
+              <UserPlus />
+            </div>
+            <div>
+              <h3 className="modal-title">New Connection</h3>
+              <p className="modal-subtitle">Add a secure contact</p>
             </div>
           </div>
+          <button onClick={onClose} className="modal-close" aria-label="Close connection modal">
+            <X />
+          </button>
+        </div>
 
-          <div>
-            <label className="font-mono text-[10px] text-slate-500 uppercase tracking-widest mb-1.5 block">
-              Relay Token <span className="text-slate-700 normal-case">(for direct delivery)</span>
-            </label>
-            <input
-              value={relayToken}
-              onChange={e => setRelayToken(e.target.value)}
-              placeholder="paste relay token..."
-              className="w-full bg-[#0a0f14] border border-slate-700/50 rounded-lg px-3 py-2.5 text-white font-mono text-xs placeholder:text-slate-700 focus:outline-none focus:border-emerald-600 transition-colors"
-            />
-          </div>
-
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-              <p className="font-mono text-xs text-red-400">✗ {error}</p>
+        <div className="modal-body">
+           {!isScanning ? (
+            <button
+              onClick={() => setIsScanning(true)}
+              className="connection-scanner-button"
+            >
+              <ScanLine />
+              <span>Scan QR Code</span>
+            </button>
+          ) : (
+            <div className="scanner-wrap">
+              <button onClick={() => setIsScanning(false)} className="scanner-close" aria-label="Stop scanning">
+                <XCircle />
+              </button>
+              <div id="qr-reader" />
+              {scanError && <p className="scanner-error">{scanError}</p>}
             </div>
           )}
 
-          <button
-            onClick={handleAdd}
-            disabled={loading || !pseudoId.trim()}
-            className="w-full py-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-mono font-semibold text-sm tracking-wider transition-all flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> RESOLVING...</>
-            ) : (
-              <><Search className="w-3.5 h-3.5" /> LOOKUP &amp; ADD</>
+          <div className="manual-divider">or enter manually</div>
+
+          <div className="form-stack">
+          <div>
+            <label className="field-label">Callsign ID</label>
+            <div className="lookup-row">
+              <input
+                type="text"
+                value={pseudoId}
+                onChange={e => { setPseudoId(e.target.value); setLookupStatus('idle'); }}
+                className="input-tactical flex-1"
+                placeholder="Enter callsign"
+              />
+              <button
+                onClick={lookupCallsign}
+                disabled={!pseudoId.trim() || lookingUp}
+                className="lookup-button"
+              >
+                 {lookingUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              </button>
+            </div>
+             {lookupStatus === 'found' && (
+              <p className="field-note success"><Check className="w-3 h-3"/> Public key retrieved</p>
             )}
-          </button>
+             {lookupStatus === 'not-found' && (
+              <p className="field-note danger">Callsign not found - enter public key manually</p>
+            )}
+          </div>
+
+          <div>
+             <label className="field-label">Relay Token</label>
+             <input
+              type="text"
+              value={relayToken}
+              onChange={e => setRelayToken(e.target.value)}
+              className="input-tactical"
+              placeholder="Paste token"
+            />
+          </div>
+
+          <div>
+             <label className="field-label">Public Key (Ed25519)</label>
+             <input
+              type="text"
+              value={dhPublicKey}
+              onChange={e => setDhPublicKey(e.target.value)}
+              className="input-tactical font-mono text-[11px]"
+              placeholder="Base64 public key"
+            />
+          </div>
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button onClick={handleSave} disabled={!canSave} className="app-button primary" style={{ width: '100%' }}>
+              Add Connection
+            </button>
         </div>
       </motion.div>
     </div>

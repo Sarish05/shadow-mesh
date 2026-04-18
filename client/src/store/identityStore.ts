@@ -25,11 +25,18 @@ export const useIdentityStore = create<IdentityState>((set) => ({
 
   restoreIdentity: () => {
     const identity = loadIdentity();
-    if (identity) set({ identity, isOnboarded: true });
+    const existingToken = localStorage.getItem('shadow_mesh_relay_token');
+    if (identity) {
+      set({ identity, isOnboarded: true });
+      if (existingToken) set({ relayToken: existingToken });
+    }
     return identity;
   },
 
-  setRelayToken: (relayToken) => set({ relayToken }),
+  setRelayToken: (relayToken) => {
+    localStorage.setItem('shadow_mesh_relay_token', relayToken);
+    set({ relayToken });
+  },
 
   reset: () => {
     localStorage.clear();

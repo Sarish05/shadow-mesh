@@ -4,24 +4,25 @@ import { useIdentityStore } from '../store/identityStore';
 import { useChatStore, type Contact } from '../store/chatStore';
 import { useAuditStore } from '../store/auditStore';
 import { useSocket } from '../hooks/useSocket';
-import { encryptPayload } from '../crypto/encrypt';
+import { encryptPayload, type EncryptedPacket } from '../crypto/encrypt';
 import { getOrCreateSession } from '../crypto/session';
 import { textToBytes, normalizeImage, normalizeAudio } from '../crypto/normalize';
 import { generateCommitment } from '../crypto/commitment';
 import AddContact from '../components/AddContact';
 import MessageBubble from '../components/MessageBubble';
+import MyProfile from '../components/MyProfile';
 import { v4 as uuidv4 } from 'uuid';
 import {
-  Send, ImageIcon, Mic, MicOff, UserPlus, ShieldCheck,
-  Copy, LayoutDashboard, LogOut, Clock, ChevronRight,
-  Radio, Lock,
+  Send, ImageIcon, Mic, UserPlus, ShieldCheck,
+  LayoutDashboard, LogOut, Clock, Lock,
+  QrCode, Key, Radio, Plus, ChevronRight
 } from 'lucide-react';
 
 const TTL_OPTIONS = [
-  { label: '∞  No expiry', value: 0 },
-  { label: '⏱ 30 seconds', value: 30_000 },
-  { label: '⏱ 5 minutes', value: 300_000 },
-  { label: '⏱ 1 hour', value: 3_600_000 },
+  { label: 'Off', value: 0 },
+  { label: '30s', value: 30_000 },
+  { label: '5m', value: 300_000 },
+  { label: '1h', value: 3_600_000 },
 ];
 
 interface Props {
@@ -38,11 +39,12 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
   const [text, setText] = useState('');
   const [ttl, setTtl] = useState(0);
   const [showAddContact, setShowAddContact] = useState(false);
+  const [showMyProfile, setShowMyProfile] = useState(false);
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-  const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
   const activeContact = contacts.find(c => c.pseudoId === activeContactId) ?? null;
   const channelMessages = messages.filter(
@@ -58,6 +60,13 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [channelMessages.length]);
 
+  useEffect(() => {
+    if (textAreaRef.current) {
+      textAreaRef.current.style.height = 'auto';
+      textAreaRef.current.style.height = Math.min(textAreaRef.current.scrollHeight, 120) + 'px';
+    }
+  }, [text]);
+
   const getSession = useCallback(async (contact: Contact) => {
     if (!identity) throw new Error('No identity');
     const channelId = [identity.pseudoId, contact.pseudoId].sort().join(':');
@@ -69,10 +78,13 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
     if (!activeContact.relayToken) { alert('Share your relay token with this contact first.'); return; }
     const { session, channelId } = await getSession(activeContact);
     const payload = textToBytes(text.trim());
+    const msgId = uuidv4();
     const packet = await encryptPayload(session.key, 'text', payload, ttl);
+    const packetWithId: EncryptedPacket & { msgId: string } = { ...packet, msgId };
     const commitment = await generateCommitment(relayToken, 'text_message', payload.length);
-    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packet, action: 'message' });
-    addMessage({ id: uuidv4(), senderToken: relayToken, contentType: 'text', text: text.trim(), timestamp: Date.now(), expiresAt: ttl > 0 ? Date.now() + ttl : 0, isMine: true, commitment });
+    const createdAt = new Date().getTime();
+    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'text_message', commitment });
+    addMessage({ id: msgId, senderToken: relayToken, contentType: 'text', text: text.trim(), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
     await addEntry(relayToken, 'text_message', channelId, commitment);
     setText('');
   }
@@ -81,11 +93,14 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
     if (!activeContact?.relayToken || !identity || !relayToken) return;
     const normalized = await normalizeImage(file);
     const { session, channelId } = await getSession(activeContact);
+    const msgId = uuidv4();
     const packet = await encryptPayload(session.key, 'image', normalized, ttl);
+    const packetWithId: EncryptedPacket & { msgId: string } = { ...packet, msgId };
     const commitment = await generateCommitment(relayToken, 'image_message', normalized.length);
-    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packet, action: 'message' });
+    const createdAt = new Date().getTime();
+    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'image_message', commitment });
     const safeNorm = new Uint8Array(normalized.length); safeNorm.set(normalized);
-    addMessage({ id: uuidv4(), senderToken: relayToken, contentType: 'image', imageUrl: URL.createObjectURL(new Blob([safeNorm], { type: 'image/jpeg' })), timestamp: Date.now(), expiresAt: ttl > 0 ? Date.now() + ttl : 0, isMine: true, commitment });
+    addMessage({ id: msgId, senderToken: relayToken, contentType: 'image', imageUrl: URL.createObjectURL(new Blob([safeNorm], { type: 'image/jpeg' })), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
     await addEntry(relayToken, 'image_message', channelId, commitment);
   }
 
@@ -107,235 +122,245 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
     if (!activeContact?.relayToken || !identity || !relayToken) return;
     const normalized = await normalizeAudio(blob);
     const { session, channelId } = await getSession(activeContact);
+    const msgId = uuidv4();
     const packet = await encryptPayload(session.key, 'voice', normalized, ttl);
+    const packetWithId: EncryptedPacket & { msgId: string } = { ...packet, msgId };
     const commitment = await generateCommitment(relayToken, 'voice_message', normalized.length);
-    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packet, action: 'message' });
-    addMessage({ id: uuidv4(), senderToken: relayToken, contentType: 'voice', audioUrl: URL.createObjectURL(blob), timestamp: Date.now(), expiresAt: ttl > 0 ? Date.now() + ttl : 0, isMine: true, commitment });
+    const createdAt = new Date().getTime();
+    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'voice_message', commitment });
+    addMessage({ id: msgId, senderToken: relayToken, contentType: 'voice', audioUrl: URL.createObjectURL(blob), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
     await addEntry(relayToken, 'voice_message', channelId, commitment);
   }
 
-  function copyToken() {
-    if (relayToken) { navigator.clipboard.writeText(relayToken); setCopied(true); setTimeout(() => setCopied(false), 2000); }
-  }
-
   return (
-    <div className="flex h-screen bg-[#020409] grid-bg overflow-hidden">
-      {/* ── Sidebar ── */}
-      <div className="w-72 border-r border-emerald-900/30 flex flex-col bg-[#040810]">
-        {/* Identity card */}
-        <div className="p-4 border-b border-emerald-900/30">
-          <div className="bg-emerald-900/20 border border-emerald-800/30 rounded-xl p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="font-mono text-[10px] text-emerald-600 uppercase tracking-widest">Active Identity</span>
+    <div className="chat-app">
+
+      {/* ── SIDEBAR ─────────────────────────────────────── */}
+      <div className="chat-sidebar">
+
+        {/* User profile section */}
+        <div className="sidebar-profile">
+            <div className="avatar">
+              {identity?.pseudoId.slice(0, 2)}
             </div>
-            <div className="font-mono text-lg font-bold text-emerald-400 tracking-widest text-glow mb-2">
-              {identity?.pseudoId}
+            <div>
+              <div className="sidebar-name">{identity?.pseudoId}</div>
+              <div className="sidebar-status">
+                <div className="status-dot" />
+                <span>Connected to Relay</span>
+              </div>
             </div>
             <button
-              onClick={copyToken}
-              className="flex items-center gap-1.5 text-[11px] font-mono text-slate-500 hover:text-emerald-400 transition-colors group"
+              onClick={() => setShowMyProfile(true)}
+              className="sidebar-profile-button"
+              title="Show Profile & Identity"
             >
-              <Copy className="w-3 h-3 group-hover:text-emerald-400" />
-              {copied ? <span className="text-emerald-400">Copied!</span> : 'Copy relay token'}
+              <QrCode className="w-4 h-4" />
             </button>
-          </div>
         </div>
 
-        {/* Contacts list */}
-        <div className="flex-1 overflow-y-auto p-3">
-          <div className="flex items-center justify-between mb-3 px-1">
-            <span className="font-mono text-[10px] text-slate-600 uppercase tracking-widest">Contacts</span>
-            <button
-              onClick={() => setShowAddContact(true)}
-              className="flex items-center gap-1 text-slate-600 hover:text-emerald-400 transition-colors"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-            </button>
-          </div>
+        {/* Contacts Header */}
+        <div className="contacts-header">
+          <span className="contacts-title">
+            <Radio className="w-3.5 h-3.5" /> Secure Contacts
+          </span>
+          <button
+            onClick={() => setShowAddContact(true)}
+            className="contact-add-button"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
 
+        {/* Contacts List */}
+        <div className="contacts-list">
           {contacts.length === 0 ? (
-            <div className="text-center py-8 px-2">
-              <Radio className="w-6 h-6 text-slate-700 mx-auto mb-2" />
-              <p className="font-mono text-[11px] text-slate-700">No contacts on network.</p>
-              <p className="font-mono text-[10px] text-slate-800 mt-1">Add by Operational ID</p>
+            <div className="sidebar-empty">
+              <div className="sidebar-empty-icon">
+                <UserPlus className="w-6 h-6" />
+              </div>
+              <p className="sidebar-empty-title">No connections yet.</p>
+              <p className="sidebar-empty-copy">Add a contact to start an encrypted channel.</p>
             </div>
           ) : (
             contacts.map(c => (
               <button
                 key={c.pseudoId}
                 onClick={() => setActiveContact(c.pseudoId)}
-                className={`w-full text-left px-3 py-3 rounded-xl mb-1 transition-all group ${
-                  activeContactId === c.pseudoId
-                    ? 'bg-emerald-900/30 border border-emerald-700/40'
-                    : 'hover:bg-slate-900/50 border border-transparent'
-                }`}
+                className={`contact-row ${activeContactId === c.pseudoId ? 'active' : ''}`}
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-mono text-sm font-bold text-emerald-400 tracking-widest">{c.pseudoId}</div>
-                    <div className="font-mono text-[10px] text-slate-700 mt-0.5">
-                      {c.relayToken ? `token: ${c.relayToken.slice(0, 8)}...` : 'no relay token'}
-                    </div>
+                <div className="relative shrink-0">
+                  <div className="contact-avatar">
+                    {c.pseudoId.slice(0, 2)}
                   </div>
-                  <ChevronRight className={`w-3.5 h-3.5 transition-colors ${activeContactId === c.pseudoId ? 'text-emerald-600' : 'text-slate-800 group-hover:text-slate-600'}`} />
+                  {c.relayToken && (
+                    <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--success)] border-2 border-[var(--bg-surface)]" />
+                  )}
                 </div>
+                <div>
+                  <div className="contact-name">
+                    {c.pseudoId}
+                  </div>
+                  <div className="contact-meta">
+                    {c.relayToken ? 'E2E Secured' : 'No Relay'}
+                  </div>
+                </div>
+                <ChevronRight />
               </button>
             ))
           )}
         </div>
 
-        {/* Bottom nav */}
-        <div className="p-3 border-t border-emerald-900/30 space-y-1">
-          <button onClick={onShowDashboard} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20 transition-all text-sm font-mono">
-            <LayoutDashboard className="w-4 h-4" />AUDIT DASHBOARD
+        {/* Nav Footer */}
+        <div className="sidebar-footer">
+          <button
+            onClick={onShowDashboard}
+            className="sidebar-nav-button"
+          >
+            <LayoutDashboard className="w-4 h-4" /> Audit Logs
           </button>
-          <button onClick={onLogout} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-900/10 transition-all text-sm font-mono">
-            <LogOut className="w-4 h-4" />CLEAR IDENTITY
+          <button
+            onClick={onLogout}
+            className="sidebar-nav-button danger"
+          >
+            <LogOut className="w-4 h-4" /> Sign Out
           </button>
         </div>
       </div>
 
-      {/* ── Chat area ── */}
-      <div className="flex-1 flex flex-col min-w-0">
+
+      {/* ── MAIN CHAT AREA ──────────────────────────────── */}
+      <div className="chat-main">
+
         {!activeContact ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center space-y-4">
-              <div className="w-20 h-20 rounded-2xl bg-emerald-900/20 border border-emerald-900/40 flex items-center justify-center mx-auto">
-                <Lock className="w-9 h-9 text-emerald-800" />
+          <div className="chat-empty">
+            <div className="chat-empty-card">
+              <div className="empty-icon">
+                <Lock />
               </div>
-              <div>
-                <p className="font-mono text-slate-500 text-sm">SELECT A CONTACT TO BEGIN</p>
-                <p className="font-mono text-slate-700 text-xs mt-1">All comms are end-to-end encrypted</p>
+              <h2 className="empty-title">Shadow Mesh</h2>
+              <p className="empty-copy">
+                Select a contact to begin secure communication. All messages are end-to-end encrypted locally.
+              </p>
+              <div className="proof-grid">
+                  <MiniProof icon={<ShieldCheck />} label="Local encryption" />
+                  <MiniProof icon={<Key />} label="Zero relay access" />
+                  <MiniProof icon={<Radio />} label="Audit ready" />
               </div>
-              <div className="flex items-center justify-center gap-2 font-mono text-[10px] text-slate-700">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-800 inline-block" />AES-256-GCM
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-800 inline-block" />X25519-ECDH
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-800 inline-block" />DUAL-RELAY
-              </div>
+              <button onClick={() => setShowAddContact(true)} className="app-button primary">
+                <Plus className="w-4 h-4" /> New Connection
+              </button>
             </div>
           </div>
         ) : (
           <>
             {/* Header */}
-            <div className="h-16 border-b border-emerald-900/30 px-5 flex items-center justify-between bg-[#040810]/80 backdrop-blur-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-900/30 border border-emerald-800/40 flex items-center justify-center">
-                  <span className="font-mono text-sm font-bold text-emerald-400">{activeContact.pseudoId.slice(0, 2)}</span>
+            <div className="chat-header">
+              <div className="chat-header-person">
+                <div className="chat-header-avatar">
+                  {activeContact.pseudoId.slice(0, 2)}
                 </div>
                 <div>
-                  <div className="font-mono font-bold text-emerald-300 tracking-widest text-sm">{activeContact.pseudoId}</div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                    <span className="font-mono text-[10px] text-emerald-700">E2E ENCRYPTED · AES-256-GCM · X25519 SESSION KEY</span>
+                  <div className="chat-header-name">{activeContact.pseudoId}</div>
+                  <div className="chat-header-meta">
+                    <ShieldCheck className="w-3 h-3 text-[var(--success)]" />
+                    <span className="text-xs text-[var(--text-muted)]">AES-256-GCM Secure Channel</span>
                   </div>
                 </div>
               </div>
 
-              {/* TTL selector */}
-              <div className="flex items-center gap-2 bg-[#070d11] border border-slate-800 rounded-lg px-3 py-2">
-                <Clock className="w-3.5 h-3.5 text-slate-600" />
-                <select
-                  value={ttl}
-                  onChange={e => setTtl(Number(e.target.value))}
-                  className="bg-transparent text-slate-400 font-mono text-xs focus:outline-none cursor-pointer"
-                >
-                  {TTL_OPTIONS.map(o => <option key={o.value} value={o.value} className="bg-[#0a0f14]">{o.label}</option>)}
-                </select>
+              {/* TTL Select */}
+              <div className="flex items-center gap-2">
+                <div className="ttl-picker">
+                  <Clock className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
+                  <select
+                    value={ttl}
+                    onChange={e => setTtl(Number(e.target.value))}
+                    className="bg-transparent text-xs text-[var(--text-primary)] outline-none cursor-pointer"
+                  >
+                    {TTL_OPTIONS.map(o => <option key={o.value} value={o.value} className="bg-[var(--bg-surface)]">{o.label}</option>)}
+                  </select>
+                </div>
               </div>
             </div>
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto py-4 px-4">
-              {channelMessages.length === 0 && (
-                <div className="text-center py-12">
-                  <div className="font-mono text-xs text-slate-700 space-y-1">
-                    <p>[ SECURE CHANNEL ESTABLISHED ]</p>
-                    <p>[ SESSION KEY DERIVED VIA X25519-ECDH ]</p>
-                    <p>[ WAITING FOR FIRST TRANSMISSION ]</p>
-                  </div>
-                </div>
-              )}
-              <AnimatePresence>
-                {channelMessages.map(msg => <MessageBubble key={msg.id} msg={msg} />)}
+            <div className="messages-area">
+              <AnimatePresence initial={false}>
+                {channelMessages.length === 0 ? (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="message-empty">
+                    <div>
+                    <div className="message-empty-icon empty-icon">
+                      <ShieldCheck className="w-7 h-7" />
+                    </div>
+                    <p className="text-sm text-[var(--text-secondary)] font-medium">End-to-end encrypted connection established.</p>
+                    <p className="text-xs text-[var(--text-muted)] mt-1">Messages cannot be read by any intermediate server.</p>
+                    </div>
+                  </motion.div>
+                ) : (
+                  channelMessages.map(m => <MessageBubble key={m.id} msg={m} />)
+                )}
               </AnimatePresence>
-              <div ref={bottomRef} />
+              <div ref={bottomRef} className="h-4" />
             </div>
 
-            {/* Input bar */}
-            <div className="border-t border-emerald-900/30 p-4 bg-[#040810]/80 backdrop-blur-sm">
-              <div className="flex items-center gap-2">
-                <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) sendImage(f); e.target.value = ''; }}
-                />
-
+            {/* Input Bar */}
+            <div className="chat-composer">
+              <div className="composer-inner">
+                
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-10 h-10 rounded-xl bg-[#070d11] border border-slate-800 hover:border-emerald-700/50 flex items-center justify-center text-slate-600 hover:text-emerald-400 transition-all"
-                  title="Send encrypted image"
+                  className="composer-button"
+                  title="Send Image"
                 >
-                  <ImageIcon className="w-4 h-4" />
+                  <ImageIcon className="w-5 h-5" />
                 </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept="image/*"
+                  onChange={e => e.target.files?.[0] && sendImage(e.target.files[0])}
+                />
 
-                <button
-                  onClick={recording ? stopRecording : startRecording}
-                  className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-all ${
-                    recording
-                      ? 'bg-red-900/40 border-red-700/50 text-red-400 animate-pulse'
-                      : 'bg-[#070d11] border-slate-800 hover:border-emerald-700/50 text-slate-600 hover:text-emerald-400'
-                  }`}
-                  title={recording ? 'Stop recording' : 'Record voice note'}
-                >
-                  {recording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                </button>
-
-                <div className="flex-1 relative">
-                  <input
+                <div className="composer-input">
+                  <textarea
+                    ref={textAreaRef}
                     value={text}
                     onChange={e => setText(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendText())}
-                    placeholder="Compose encrypted message..."
-                    className="w-full bg-[#070d11] border border-slate-800 focus:border-emerald-700/60 rounded-xl px-4 py-2.5 text-white text-sm font-mono placeholder:text-slate-700 focus:outline-none transition-colors"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendText();
+                      }
+                    }}
+                    placeholder="Message..."
+                    className=""
+                    rows={1}
                   />
                 </div>
 
-                <button
-                  onClick={sendText}
-                  disabled={!text.trim()}
-                  className="w-10 h-10 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 flex items-center justify-center text-white transition-all hover:scale-105 active:scale-95"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
-
-              {recording && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="flex items-center gap-2 mt-2 px-1"
-                >
-                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  <span className="font-mono text-[11px] text-red-500">RECORDING · CBR OPUS · Click mic to send</span>
-                </motion.div>
-              )}
-
-              {/* Encryption status bar */}
-              <div className="flex items-center gap-3 mt-2 px-1">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                  <span className="font-mono text-[10px] text-slate-700">AES-256-GCM</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                  <span className="font-mono text-[10px] text-slate-700">DUAL RELAY ACTIVE</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-700" />
-                  <span className="font-mono text-[10px] text-slate-700">IP MASKED</span>
-                </div>
-                <div className="ml-auto font-mono text-[10px] text-slate-800">
-                  {ttl > 0 ? `EPHEMERAL · ${TTL_OPTIONS.find(o => o.value === ttl)?.label.replace('⏱ ', '')}` : 'PERSISTENT'}
-                </div>
+                {!text.trim() ? (
+                  <button
+                    onMouseDown={startRecording}
+                    onMouseUp={stopRecording}
+                    onMouseLeave={stopRecording}
+                    className={`composer-button ${
+                      recording
+                        ? 'bg-[rgba(239,68,68,0.1)] text-[var(--danger)]'
+                        : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+                    }`}
+                  >
+                    <Mic className="w-5 h-5" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={sendText}
+                    className="composer-button send"
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -344,7 +369,18 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
 
       <AnimatePresence>
         {showAddContact && <AddContact onClose={() => setShowAddContact(false)} />}
+        {showMyProfile && <MyProfile onClose={() => setShowMyProfile(false)} />}
       </AnimatePresence>
+
+    </div>
+  );
+}
+
+function MiniProof({ icon, label }: { icon: React.ReactNode, label: string }) {
+  return (
+    <div className="proof-item">
+      <span>{icon}</span>
+      <span>{label}</span>
     </div>
   );
 }
