@@ -5,7 +5,7 @@ import { useChatStore, type Contact } from '../store/chatStore';
 import { useAuditStore } from '../store/auditStore';
 import { useSocket } from '../hooks/useSocket';
 import { encryptPayload, type EncryptedPacket } from '../crypto/encrypt';
-import { getOrCreateSession } from '../crypto/session';
+import { deriveX3DHInitiatorSession } from '../crypto/session';
 import { textToBytes, normalizeImage, normalizeAudio } from '../crypto/normalize';
 import { generateCommitment } from '../crypto/commitment';
 import AddContact from '../components/AddContact';
@@ -15,7 +15,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   Send, ImageIcon, Mic, UserPlus, ShieldCheck,
   LayoutDashboard, LogOut, Clock, Lock,
-  QrCode, Key, Radio, Plus, ChevronRight
+  QrCode, Key, Radio, Plus, ChevronRight, Trash
 } from 'lucide-react';
 
 const TTL_OPTIONS = [
@@ -32,7 +32,7 @@ interface Props {
 
 export default function Chat({ onShowDashboard, onLogout }: Props) {
   const { identity, relayToken } = useIdentityStore();
-  const { messages, contacts, activeContactId, addMessage, setActiveContact, expireMessages } = useChatStore();
+  const { messages, contacts, activeContactId, addMessage, setActiveContact, expireMessages, removeContact, deleteMessage, clearChannelMessages } = useChatStore();
   const { addEntry } = useAuditStore();
   const { sendPacket } = useSocket();
 
@@ -70,38 +70,53 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
   const getSession = useCallback(async (contact: Contact) => {
     if (!identity) throw new Error('No identity');
     const channelId = [identity.pseudoId, contact.pseudoId].sort().join(':');
-    return { session: await getOrCreateSession(identity.dhSecretKey, contact.dhPublicKey, channelId), channelId };
+    const { session, header } = await deriveX3DHInitiatorSession(
+      identity,
+      contact.identityPublicKey,
+      contact.signedPreKeyPublic,
+      channelId
+    );
+    return { session, header, channelId };
   }, [identity]);
 
   async function sendText() {
     if (!text.trim() || !activeContact || !identity || !relayToken) return;
     if (!activeContact.relayToken) { alert('Share your relay token with this contact first.'); return; }
-    const { session, channelId } = await getSession(activeContact);
-    const payload = textToBytes(text.trim());
-    const msgId = uuidv4();
-    const packet = await encryptPayload(session.key, 'text', payload, ttl);
-    const packetWithId: EncryptedPacket & { msgId: string } = { ...packet, msgId };
-    const commitment = await generateCommitment(relayToken, 'text_message', payload.length);
-    const createdAt = new Date().getTime();
-    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'text_message', commitment });
-    addMessage({ id: msgId, senderToken: relayToken, contentType: 'text', text: text.trim(), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
-    await addEntry(relayToken, 'text_message', channelId, commitment);
-    setText('');
+    try {
+      const { session, header, channelId } = await getSession(activeContact);
+      const payload = textToBytes(text.trim());
+      const msgId = uuidv4();
+      const packet = await encryptPayload(session.key, 'text', payload, ttl);
+      const packetWithId: EncryptedPacket = { ...packet, msgId, x3dh: header };
+      const commitment = await generateCommitment(relayToken, 'text_message', payload.length);
+      const createdAt = new Date().getTime();
+      sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'text_message', commitment });
+      addMessage({ id: msgId, senderToken: relayToken, contentType: 'text', text: text.trim(), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
+      await addEntry(relayToken, 'text_message', channelId, commitment);
+      setText('');
+    } catch (err: any) {
+      alert(err.message || 'Failed to encrypt. Contact keys may be corrupted.');
+    }
   }
 
   async function sendImage(file: File) {
     if (!activeContact?.relayToken || !identity || !relayToken) return;
-    const normalized = await normalizeImage(file);
-    const { session, channelId } = await getSession(activeContact);
-    const msgId = uuidv4();
-    const packet = await encryptPayload(session.key, 'image', normalized, ttl);
-    const packetWithId: EncryptedPacket & { msgId: string } = { ...packet, msgId };
-    const commitment = await generateCommitment(relayToken, 'image_message', normalized.length);
-    const createdAt = new Date().getTime();
-    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'image_message', commitment });
-    const safeNorm = new Uint8Array(normalized.length); safeNorm.set(normalized);
-    addMessage({ id: msgId, senderToken: relayToken, contentType: 'image', imageUrl: URL.createObjectURL(new Blob([safeNorm], { type: 'image/jpeg' })), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
-    await addEntry(relayToken, 'image_message', channelId, commitment);
+    try {
+      const normalized = await normalizeImage(file);
+      const { session, header, channelId } = await getSession(activeContact);
+      const msgId = uuidv4();
+      const packet = await encryptPayload(session.key, 'image', normalized, ttl);
+      const packetWithId: EncryptedPacket = { ...packet, msgId, x3dh: header };
+      const commitment = await generateCommitment(relayToken, 'image_message', normalized.length);
+      const createdAt = new Date().getTime();
+      sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'image_message', commitment });
+      const safeNorm = new Uint8Array(normalized.length);
+      safeNorm.set(normalized);
+      addMessage({ id: msgId, senderToken: relayToken, contentType: 'image', imageUrl: URL.createObjectURL(new Blob([safeNorm], { type: 'image/jpeg' })), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
+      await addEntry(relayToken, 'image_message', channelId, commitment);
+    } catch (err: any) {
+      alert(err.message || 'Failed to encrypt. Contact keys may be corrupted.');
+    }
   }
 
   async function startRecording() {
@@ -120,16 +135,20 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
 
   async function sendVoice(blob: Blob) {
     if (!activeContact?.relayToken || !identity || !relayToken) return;
-    const normalized = await normalizeAudio(blob);
-    const { session, channelId } = await getSession(activeContact);
-    const msgId = uuidv4();
-    const packet = await encryptPayload(session.key, 'voice', normalized, ttl);
-    const packetWithId: EncryptedPacket & { msgId: string } = { ...packet, msgId };
-    const commitment = await generateCommitment(relayToken, 'voice_message', normalized.length);
-    const createdAt = new Date().getTime();
-    sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'voice_message', commitment });
-    addMessage({ id: msgId, senderToken: relayToken, contentType: 'voice', audioUrl: URL.createObjectURL(blob), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
-    await addEntry(relayToken, 'voice_message', channelId, commitment);
+    try {
+      const normalized = await normalizeAudio(blob);
+      const { session, header, channelId } = await getSession(activeContact);
+      const msgId = uuidv4();
+      const packet = await encryptPayload(session.key, 'voice', normalized, ttl);
+      const packetWithId: EncryptedPacket = { ...packet, msgId, x3dh: header };
+      const commitment = await generateCommitment(relayToken, 'voice_message', normalized.length);
+      const createdAt = new Date().getTime();
+      sendPacket({ recipientToken: activeContact.relayToken, encryptedBlob: packetWithId, action: 'voice_message', commitment });
+      addMessage({ id: msgId, senderToken: relayToken, contentType: 'voice', audioUrl: URL.createObjectURL(blob), timestamp: createdAt, expiresAt: ttl > 0 ? createdAt + ttl : 0, isMine: true, commitment, status: 'sent' });
+      await addEntry(relayToken, 'voice_message', channelId, commitment);
+    } catch (err: any) {
+      alert(err.message || 'Failed to encrypt. Contact keys may be corrupted.');
+    }
   }
 
   return (
@@ -184,29 +203,37 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
             </div>
           ) : (
             contacts.map(c => (
-              <button
-                key={c.pseudoId}
-                onClick={() => setActiveContact(c.pseudoId)}
-                className={`contact-row ${activeContactId === c.pseudoId ? 'active' : ''}`}
-              >
-                <div className="relative shrink-0">
-                  <div className="contact-avatar">
-                    {c.pseudoId.slice(0, 2)}
+              <div key={c.pseudoId} className="contact-row group relative flex items-center p-0">
+                <button
+                  onClick={() => setActiveContact(c.pseudoId)}
+                  className={"flex-1 flex items-center p-3 gap-3 overflow-hidden transition-colors "}
+                >
+                  <div className="relative shrink-0">
+                    <div className="contact-avatar">
+                      {c.pseudoId.slice(0, 2)}
+                    </div>
+                    {c.relayToken && (
+                      <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--success)] border-2 border-[var(--bg-surface)]" />
+                    )}
                   </div>
-                  {c.relayToken && (
-                    <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[var(--success)] border-2 border-[var(--bg-surface)]" />
-                  )}
-                </div>
-                <div>
-                  <div className="contact-name">
-                    {c.pseudoId}
+                  <div className="flex-1 text-left">
+                    <div className="contact-name">
+                      {c.pseudoId}
+                    </div>
+                    <div className="contact-meta">
+                      {c.relayToken ? 'E2E Secured' : 'No Relay'}
+                    </div>
                   </div>
-                  <div className="contact-meta">
-                    {c.relayToken ? 'E2E Secured' : 'No Relay'}
-                  </div>
-                </div>
-                <ChevronRight />
-              </button>
+                  <ChevronRight className="w-4 h-4 text-[var(--text-muted)] opacity-50" />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); if(confirm('Delete contact?')) removeContact(c.pseudoId); }}
+                  className="absolute right-2 p-1.5 rounded text-red-500 hover:bg-[var(--danger)] hover:text-white opacity-0 group-hover:opacity-100 transition-all z-10"
+                  title="Delete contact"
+                >
+                  <Trash className="w-4 h-4" />
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -272,16 +299,25 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
               {/* TTL Select */}
               <div className="flex items-center gap-2">
                 <div className="ttl-picker">
-                  <Clock className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
-                  <select
-                    value={ttl}
-                    onChange={e => setTtl(Number(e.target.value))}
-                    className="bg-transparent text-xs text-[var(--text-primary)] outline-none cursor-pointer"
-                  >
-                    {TTL_OPTIONS.map(o => <option key={o.value} value={o.value} className="bg-[var(--bg-surface)]">{o.label}</option>)}
-                  </select>
+                    <Clock className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
+                    <select
+                      value={ttl}
+                      onChange={e => setTtl(Number(e.target.value))}
+                      className="bg-transparent text-xs text-[var(--text-primary)] outline-none cursor-pointer"
+                    >
+                      {TTL_OPTIONS.map(o => <option key={o.value} value={o.value} className="bg-[var(--bg-surface)]">{o.label}</option>)}
+                    </select>
+                  </div>
+                  {activeContact.relayToken && (
+                    <button
+                      onClick={() => { if(confirm('Wipe history locally?')) clearChannelMessages(activeContact.relayToken!); }}
+                      className="p-1.5 ml-2 hover:bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-red-400 rounded transition-colors"
+                      title="Clear Chat History"
+                    >
+                      <Trash className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
-              </div>
             </div>
 
             {/* Messages */}
@@ -298,7 +334,7 @@ export default function Chat({ onShowDashboard, onLogout }: Props) {
                     </div>
                   </motion.div>
                 ) : (
-                  channelMessages.map(m => <MessageBubble key={m.id} msg={m} />)
+                  channelMessages.map(m => <MessageBubble key={m.id} msg={m} onDelete={() => deleteMessage(m.id)} />)
                 )}
               </AnimatePresence>
               <div ref={bottomRef} className="h-4" />
@@ -384,3 +420,18 @@ function MiniProof({ icon, label }: { icon: React.ReactNode, label: string }) {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

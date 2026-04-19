@@ -1,12 +1,26 @@
 import nacl from 'tweetnacl';
-import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
+import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
+import { getSecureRecord, setSecureRecord } from './secureStorage';
 
 export interface Identity {
   pseudoId: string;
-  publicKey: string;
-  secretKey: string;
-  dhPublicKey: string;
-  dhSecretKey: string;
+  identityPublicKey: string;
+  identitySecretKey: string;
+  signedPreKeyPublic: string;
+  signedPreKeySecret: string;
+  signedPreKeySignature: string;
+  signingPublicKey: string;
+  signingSecretKey: string;
+}
+
+export interface PublicIdentityBundle {
+  version: 1;
+  pseudoId: string;
+  relayToken: string;
+  identityPublicKey: string;
+  signedPreKeyPublic: string;
+  signedPreKeySignature: string;
+  signingPublicKey: string;
 }
 
 const STORAGE_KEY = 'sm_identity';
@@ -24,46 +38,78 @@ export function generateIdentity(): Identity {
     .slice(0, 12)
     .toUpperCase();
 
-  const signKP = nacl.sign.keyPair();
-  const dhKP = nacl.box.keyPair();
+  const signing = nacl.sign.keyPair();
+  const identityDh = nacl.box.keyPair();
+  const signedPreKey = nacl.box.keyPair();
+  const signedPreKeySignature = nacl.sign.detached(
+    signedPreKey.publicKey,
+    signing.secretKey
+  );
 
   return {
     pseudoId,
-    publicKey: encodeBase64(u8(signKP.publicKey)),
-    secretKey: encodeBase64(u8(signKP.secretKey)),
-    dhPublicKey: encodeBase64(u8(dhKP.publicKey)),
-    dhSecretKey: encodeBase64(u8(dhKP.secretKey)),
+    identityPublicKey: encodeBase64(u8(identityDh.publicKey)),
+    identitySecretKey: encodeBase64(u8(identityDh.secretKey)),
+    signedPreKeyPublic: encodeBase64(u8(signedPreKey.publicKey)),
+    signedPreKeySecret: encodeBase64(u8(signedPreKey.secretKey)),
+    signedPreKeySignature: encodeBase64(u8(signedPreKeySignature)),
+    signingPublicKey: encodeBase64(u8(signing.publicKey)),
+    signingSecretKey: encodeBase64(u8(signing.secretKey)),
   };
 }
 
-export function saveIdentity(identity: Identity): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
+export function createPublicBundle(identity: Identity, relayToken: string): PublicIdentityBundle {
+  return {
+    version: 1,
+    pseudoId: identity.pseudoId,
+    relayToken,
+    identityPublicKey: identity.identityPublicKey,
+    signedPreKeyPublic: identity.signedPreKeyPublic,
+    signedPreKeySignature: identity.signedPreKeySignature,
+    signingPublicKey: identity.signingPublicKey,
+  };
 }
 
-export function loadIdentity(): Identity | null {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return raw ? (JSON.parse(raw) as Identity) : null;
+export function verifyPublicBundle(bundle: PublicIdentityBundle): boolean {
+  try {
+    return nacl.sign.detached.verify(
+      decodeBase64(bundle.signedPreKeyPublic),
+      decodeBase64(bundle.signedPreKeySignature),
+      decodeBase64(bundle.signingPublicKey)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isIdentity(value: Identity | null): value is Identity {
+  return Boolean(
+    value?.pseudoId &&
+    value.identityPublicKey &&
+    value.identitySecretKey &&
+    value.signedPreKeyPublic &&
+    value.signedPreKeySecret &&
+    value.signedPreKeySignature &&
+    value.signingPublicKey &&
+    value.signingSecretKey
+  );
+}
+
+export async function saveIdentity(identity: Identity): Promise<void> {
+  await setSecureRecord(STORAGE_KEY, identity);
+}
+
+export async function loadIdentity(): Promise<Identity | null> {
+  const stored = await getSecureRecord<Identity>(STORAGE_KEY);
+  if (isIdentity(stored)) return stored;
+
+  const legacy = localStorage.getItem(STORAGE_KEY);
+  if (!legacy) return null;
+
+  localStorage.removeItem(STORAGE_KEY);
+  return null;
 }
 
 export function clearIdentity(): void {
   localStorage.removeItem(STORAGE_KEY);
-}
-
-export function signMessage(message: string, secretKeyB64: string): string {
-  const sk = u8(decodeBase64(secretKeyB64));
-  const msgBytes = new TextEncoder().encode(message);
-  const signed = nacl.sign(msgBytes, sk);
-  return encodeBase64(u8(signed));
-}
-
-export function verifySignature(signedB64: string, publicKeyB64: string): string | null {
-  try {
-    const pk = u8(decodeBase64(publicKeyB64));
-    const signed = u8(decodeBase64(signedB64));
-    const opened = nacl.sign.open(signed, pk);
-    if (!opened) return null;
-    return new TextDecoder().decode(opened);
-  } catch {
-    return null;
-  }
 }

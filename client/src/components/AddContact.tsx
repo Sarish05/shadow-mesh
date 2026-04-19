@@ -1,20 +1,59 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useChatStore } from '../store/chatStore';
-import { UserPlus, X, ScanLine, XCircle, Check, Loader2, Search } from 'lucide-react';
+import { UserPlus, X, ScanLine, XCircle, Check, Loader2, Search, ClipboardPaste } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
+import { type PublicIdentityBundle, verifyPublicBundle } from '../crypto/identity';
 
 interface Props { onClose: () => void; }
 
 export default function AddContact({ onClose }: Props) {
   const [pseudoId, setPseudoId] = useState('');
   const [relayToken, setRelayToken] = useState('');
-  const [dhPublicKey, setDhPublicKey] = useState('');
+  const [identityPublicKey, setIdentityPublicKey] = useState('');
+  const [signedPreKeyPublic, setSignedPreKeyPublic] = useState('');
+  const [signedPreKeySignature, setSignedPreKeySignature] = useState('');
+  const [signingPublicKey, setSigningPublicKey] = useState('');
+  const [identityJson, setIdentityJson] = useState('');
+  const [jsonError, setJsonError] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState('');
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupStatus, setLookupStatus] = useState<'idle' | 'found' | 'not-found'>('idle');
   const { addContact } = useChatStore();
+
+  function fillFromBundle(raw: string) {
+    setJsonError('');
+    try {
+      const data = JSON.parse(raw.trim()) as Partial<PublicIdentityBundle>;
+      if (
+        data.version !== 1 ||
+        !data.pseudoId ||
+        !data.relayToken ||
+        !data.identityPublicKey ||
+        !data.signedPreKeyPublic ||
+        !data.signedPreKeySignature ||
+        !data.signingPublicKey
+      ) {
+        setJsonError('Identity JSON must include the signed X3DH contact bundle.');
+        return;
+      }
+      if (!verifyPublicBundle(data as PublicIdentityBundle)) {
+        setJsonError('Identity bundle signature is invalid.');
+        return;
+      }
+      setPseudoId(data.pseudoId.trim());
+      setRelayToken(data.relayToken.trim());
+      setIdentityPublicKey(data.identityPublicKey.trim());
+      setSignedPreKeyPublic(data.signedPreKeyPublic.trim());
+      setSignedPreKeySignature(data.signedPreKeySignature.trim());
+      setSigningPublicKey(data.signingPublicKey.trim());
+      setLookupStatus('found');
+      setIdentityJson('');
+    } catch {
+      setJsonError('Could not parse identity JSON.');
+    }
+  }
 
   useEffect(() => {
     if (!isScanning) return;
@@ -27,13 +66,10 @@ export default function AddContact({ onClose }: Props) {
       (decodedText) => {
         try {
           const data = JSON.parse(decodedText);
-          if (data.pseudoId && data.dhPublicKey && data.relayToken) {
-            setPseudoId(data.pseudoId);
-            setDhPublicKey(data.dhPublicKey);
-            setRelayToken(data.relayToken);
+          if (data.pseudoId && data.signedPreKeyPublic && data.relayToken) {
+            fillFromBundle(decodedText);
             scanner.clear();
             setIsScanning(false);
-            setLookupStatus('found');
           } else {
             setScanError('Invalid QR format');
           }
@@ -54,8 +90,7 @@ export default function AddContact({ onClose }: Props) {
       const res = await fetch(`http://localhost:3002/api/identity/${encodeURIComponent(pseudoId.trim())}`);
       if (res.ok) {
         const data = await res.json() as { publicKey: string };
-        setDhPublicKey(data.publicKey);
-        setLookupStatus('found');
+        fillFromBundle(data.publicKey);
       } else {
         setLookupStatus('not-found');
       }
@@ -66,12 +101,19 @@ export default function AddContact({ onClose }: Props) {
   }
 
   function handleSave() {
-    if (!pseudoId || !dhPublicKey || !relayToken) return;
-    addContact({ pseudoId: pseudoId.trim(), dhPublicKey, relayToken: relayToken.trim() });
+    if (!pseudoId || !identityPublicKey || !signedPreKeyPublic || !signedPreKeySignature || !signingPublicKey || !relayToken) return;
+    addContact({
+      pseudoId: pseudoId.trim(),
+      identityPublicKey,
+      signedPreKeyPublic,
+      signedPreKeySignature,
+      signingPublicKey,
+      relayToken: relayToken.trim(),
+    });
     onClose();
   }
 
-  const canSave = pseudoId.trim() && dhPublicKey && relayToken.trim();
+  const canSave = pseudoId.trim() && identityPublicKey && signedPreKeyPublic && signedPreKeySignature && signingPublicKey && relayToken.trim();
 
   return (
     <div className="modal-overlay">
@@ -119,6 +161,29 @@ export default function AddContact({ onClose }: Props) {
 
           <div className="form-stack">
           <div>
+            <label className="field-label">Paste Identity JSON</label>
+            <div className="json-import">
+              <textarea
+                value={identityJson}
+                onChange={e => { setIdentityJson(e.target.value); setJsonError(''); }}
+                placeholder='Paste the copied identity JSON here'
+                rows={3}
+              />
+              <button
+                type="button"
+                onClick={() => fillFromBundle(identityJson)}
+                disabled={!identityJson.trim()}
+                className="app-button"
+              >
+                <ClipboardPaste /> Fill From JSON
+              </button>
+            </div>
+            {jsonError && <p className="field-note danger">{jsonError}</p>}
+          </div>
+
+          <div className="manual-divider compact">or edit fields</div>
+
+          <div>
             <label className="field-label">Callsign ID</label>
             <div className="lookup-row">
               <input
@@ -156,13 +221,24 @@ export default function AddContact({ onClose }: Props) {
           </div>
 
           <div>
-             <label className="field-label">Public Key (Ed25519)</label>
+             <label className="field-label">Identity Public Key</label>
              <input
               type="text"
-              value={dhPublicKey}
-              onChange={e => setDhPublicKey(e.target.value)}
+              value={identityPublicKey}
+              onChange={e => setIdentityPublicKey(e.target.value)}
               className="input-tactical font-mono text-[11px]"
-              placeholder="Base64 public key"
+              placeholder="Base64 identity public key"
+            />
+          </div>
+
+          <div>
+             <label className="field-label">Signed Prekey Public Key</label>
+             <input
+              type="text"
+              value={signedPreKeyPublic}
+              onChange={e => setSignedPreKeyPublic(e.target.value)}
+              className="input-tactical font-mono text-[11px]"
+              placeholder="Base64 signed prekey"
             />
           </div>
           </div>

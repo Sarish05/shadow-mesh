@@ -18,7 +18,10 @@ export interface ChatMessage {
 
 export interface Contact {
   pseudoId: string;
-  dhPublicKey: string;
+  identityPublicKey: string;
+  signedPreKeyPublic: string;
+  signedPreKeySignature: string;
+  signingPublicKey: string;
   relayToken?: string;
   displayName?: string;
   lastSeen?: number;
@@ -34,6 +37,9 @@ interface ChatState {
   addContact: (contact: Contact) => void;
   setActiveContact: (pseudoId: string | null) => void;
   clearMessages: () => void;
+  removeContact: (pseudoId: string) => void;
+  deleteMessage: (id: string) => void;
+  clearChannelMessages: (channelToken: string) => void;
 }
 
 export const useChatStore = create<ChatState>()(
@@ -62,6 +68,13 @@ export const useChatStore = create<ChatState>()(
       setActiveContact: (pseudoId) => set({ activeContactId: pseudoId }),
 
       clearMessages: () => set({ messages: [] }),
+      deleteMessage: (id) => set((s) => ({ messages: s.messages.filter(m => m.id !== id) })),
+      clearChannelMessages: (channelToken) => set((s) => ({ messages: s.messages.filter(m => !((m.isMine && m.senderToken === channelToken) || (!m.isMine && m.senderToken === channelToken))) })), 
+      removeContact: (pseudoId) => set((s) => ({
+        contacts: s.contacts.filter(c => c.pseudoId !== pseudoId),
+        activeContactId: s.activeContactId === pseudoId ? null : s.activeContactId,
+        messages: s.messages.filter(m => s.contacts.find(c => c.pseudoId === pseudoId)?.relayToken !== m.senderToken)
+      })),
     }),
     {
       name: 'shadow-mesh-chat-storage',
@@ -74,3 +87,6 @@ export const useChatStore = create<ChatState>()(
     }
   )
 );
+
+
+

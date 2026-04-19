@@ -1,9 +1,20 @@
 import nacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
+import { type Identity } from './identity';
 
 export interface SessionKey {
   key: CryptoKey;
   rawB64: string;
+}
+
+export interface X3DHHeader {
+  senderIdentityPublicKey: string;
+  senderEphemeralPublicKey: string;
+}
+
+export interface X3DHSession {
+  session: SessionKey;
+  header: X3DHHeader;
 }
 
 const u8 = (x: ArrayLike<number>): Uint8Array<ArrayBuffer> => {
@@ -13,9 +24,14 @@ const u8 = (x: ArrayLike<number>): Uint8Array<ArrayBuffer> => {
 };
 
 function deriveSharedSecret(ourSecretKeyB64: string, theirPublicKeyB64: string): Uint8Array<ArrayBuffer> {
-  const ourSK = u8(decodeBase64(ourSecretKeyB64));
-  const theirPK = u8(decodeBase64(theirPublicKeyB64));
-  return u8(nacl.scalarMult(ourSK, theirPK));
+  if (!ourSecretKeyB64 || !theirPublicKeyB64) throw new Error('Attempted to derive shared secret with missing or invalid keys (Legacy Contact). Please delete this contact and add them again.');
+  try {
+    const ourSK = u8(decodeBase64(ourSecretKeyB64));
+    const theirPK = u8(decodeBase64(theirPublicKeyB64));
+    return u8(nacl.scalarMult(ourSK, theirPK));
+  } catch (err) {
+    throw new Error('Contact keys are corrupted or from an older version. Please delete this contact and add them again.');
+  }
 }
 
 async function hkdf(sharedSecret: Uint8Array<ArrayBuffer>, info: string): Promise<CryptoKey> {
@@ -29,30 +45,56 @@ async function hkdf(sharedSecret: Uint8Array<ArrayBuffer>, info: string): Promis
   );
 }
 
-export async function deriveSessionKey(
-  ourDhSecretKeyB64: string,
-  theirDhPublicKeyB64: string,
-  channelId: string
-): Promise<SessionKey> {
-  const sharedSecret = deriveSharedSecret(ourDhSecretKeyB64, theirDhPublicKeyB64);
-  const key = await hkdf(sharedSecret, `shadow-mesh-v1:${channelId}`);
+function concatSecrets(...parts: Uint8Array<ArrayBuffer>[]): Uint8Array<ArrayBuffer> {
+  const total = parts.reduce((sum, p) => sum + p.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return u8(out);
+}
+
+async function makeSession(secretMaterial: Uint8Array<ArrayBuffer>, info: string): Promise<SessionKey> {
+  const key = await hkdf(secretMaterial, info);
   const raw = await crypto.subtle.exportKey('raw', key);
   return { key, rawB64: encodeBase64(u8(new Uint8Array(raw))) };
 }
 
-const sessionCache = new Map<string, SessionKey>();
+export async function deriveX3DHInitiatorSession(
+  ourIdentity: Identity,
+  theirIdentityPublicKeyB64: string,
+  theirSignedPreKeyPublicB64: string,
+  channelId: string
+): Promise<X3DHSession> {
+  const eph = nacl.box.keyPair();
+  const ephPublic = encodeBase64(u8(eph.publicKey));
+  const ephSecret = encodeBase64(u8(eph.secretKey));
 
-export async function getOrCreateSession(
-  ourDhSecretKeyB64: string,
-  theirDhPublicKeyB64: string,
+  const dh1 = deriveSharedSecret(ourIdentity.identitySecretKey, theirSignedPreKeyPublicB64);
+  const dh2 = deriveSharedSecret(ephSecret, theirIdentityPublicKeyB64);
+  const dh3 = deriveSharedSecret(ephSecret, theirSignedPreKeyPublicB64);
+  const session = await makeSession(concatSecrets(dh1, dh2, dh3), `shadow-mesh-x3dh-v1:${channelId}`);
+
+  return {
+    session,
+    header: {
+      senderIdentityPublicKey: ourIdentity.identityPublicKey,
+      senderEphemeralPublicKey: ephPublic,
+    },
+  };
+}
+
+export async function deriveX3DHRecipientSession(
+  ourIdentity: Identity,
+  theirIdentityPublicKeyB64: string,
+  theirEphemeralPublicKeyB64: string,
   channelId: string
 ): Promise<SessionKey> {
-  if (sessionCache.has(channelId)) return sessionCache.get(channelId)!;
-  const sk = await deriveSessionKey(ourDhSecretKeyB64, theirDhPublicKeyB64, channelId);
-  sessionCache.set(channelId, sk);
-  return sk;
+  const dh1 = deriveSharedSecret(ourIdentity.signedPreKeySecret, theirIdentityPublicKeyB64);
+  const dh2 = deriveSharedSecret(ourIdentity.identitySecretKey, theirEphemeralPublicKeyB64);
+  const dh3 = deriveSharedSecret(ourIdentity.signedPreKeySecret, theirEphemeralPublicKeyB64);
+  return makeSession(concatSecrets(dh1, dh2, dh3), `shadow-mesh-x3dh-v1:${channelId}`);
 }
 
-export function clearSession(channelId: string) {
-  sessionCache.delete(channelId);
-}

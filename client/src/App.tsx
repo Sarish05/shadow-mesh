@@ -9,12 +9,19 @@ type View = 'onboarding' | 'chat' | 'dashboard';
 
 export default function App() {
   const { isOnboarded, restoreIdentity, reset } = useIdentityStore();
-  const [view, setView] = useState<View>('onboarding');
+  const [view, setView] = useState<View>('chat');
+  const [isRestoring, setIsRestoring] = useState(true);
 
   // Restore identity from localStorage on mount
   useEffect(() => {
-    const existing = restoreIdentity();
-    if (existing) setView('chat');
+    restoreIdentity().then(existing => {
+      if (existing) {
+        setView('chat');
+      } else {
+        setView('onboarding');
+      }
+      setIsRestoring(false);
+    });
   }, []);
 
   function handleOnboardingComplete() {
@@ -23,13 +30,15 @@ export default function App() {
 
   function handleLogout() {
     if (confirm('Clear your identity? This cannot be undone.')) {
-      reset();
+      void reset();
       setView('onboarding');
     }
   }
 
   // Socket connection is active whenever identity exists
   useSocket();
+
+  if (isRestoring) return <div className="flex h-screen items-center justify-center bg-[var(--bg-base)] text-[var(--text-muted)]">Initializing Secure Enclave...</div>;
 
   if (view === 'onboarding' || !isOnboarded) {
     return <Onboarding onComplete={handleOnboardingComplete} />;
@@ -46,3 +55,4 @@ export default function App() {
     />
   );
 }
+

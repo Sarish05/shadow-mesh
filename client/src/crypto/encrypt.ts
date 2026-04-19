@@ -10,6 +10,11 @@ export interface EncryptedPacket {
   paddedSize: number;
   commitment: string;
   expiresAt: number;
+  msgId?: string;
+  x3dh?: {
+    senderIdentityPublicKey: string;
+    senderEphemeralPublicKey: string;
+  };
 }
 
 const u8 = (x: ArrayLike<number>): Uint8Array<ArrayBuffer> => {

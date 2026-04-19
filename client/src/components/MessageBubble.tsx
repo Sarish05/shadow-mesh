@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { type ChatMessage } from '../store/chatStore';
 import { Play, Pause, Clock, ShieldCheck, Check, CheckCheck } from 'lucide-react';
 
-interface Props { msg: ChatMessage; }
+import { Trash2 } from 'lucide-react';
 
-export default function MessageBubble({ msg }: Props) {
+interface Props { msg: ChatMessage; onDelete?: () => void; }
+
+export default function MessageBubble({ msg, onDelete }: Props) {
   const [playing, setPlaying] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -26,12 +28,26 @@ export default function MessageBubble({ msg }: Props) {
   const isMine = msg.isMine;
 
   return (
-    <div className={`flex ${isMine ? 'justify-end' : 'justify-start'} mb-4`}>
+    <div className={`flex w-full mb-4 group relative ${isMine ? 'justify-end' : 'justify-start'}`}>
       <div className={`flex flex-col gap-1 max-w-[85%] md:max-w-md ${isMine ? 'items-end' : 'items-start'}`}>
 
-        <div className={`rounded-2xl px-4 py-3 text-sm shadow-sm ${
-          isMine ? 'bubble-mine rounded-tr-sm' : 'bubble-theirs rounded-tl-sm'
+        <div className={`rounded-2xl px-4 py-3 text-sm shadow-sm relative ${
+          msg.contentType === 'text' 
+            ? (isMine ? 'bg-[var(--primary)] text-white' : 'bg-[var(--bg-surface)] text-[var(--text-primary)]')
+            : 'bg-transparent p-0 shadow-none'
         }`}>
+
+          {/* Delete Icon */}
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className={`absolute top-1/2 -translate-y-1/2 p-2 rounded-full bg-[var(--bg-surface)] shadow-md text-[var(--text-muted)] hover:text-red-400 hover:bg-[var(--bg-hover)] opacity-0 group-hover:opacity-100 transition-all z-10 ${
+                isMine ? '-left-12' : '-right-12'
+              }`}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
 
           {/* Text */}
           {msg.contentType === 'text' && (
@@ -110,3 +126,8 @@ export default function MessageBubble({ msg }: Props) {
     </div>
   );
 }
+
+
+
+
+

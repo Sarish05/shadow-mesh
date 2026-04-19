@@ -8,14 +8,14 @@ interface Props { onComplete: () => void; }
 export default function Onboarding({ onComplete }: Props) {
   const { createIdentity } = useIdentityStore();
   const [phase, setPhase] = useState<'intro' | 'generating' | 'done'>('intro');
-  const [generated, setGenerated] = useState<{ pseudoId: string; publicKey: string } | null>(null);
+  const [generated, setGenerated] = useState<{ pseudoId: string; identityPublicKey: string } | null>(null);
 
   async function handleGenerate() {
     setPhase('generating');
     // Simulate slight delay for the feeling of key generation
     await new Promise(r => setTimeout(r, 1200));
-    const id = createIdentity();
-    setGenerated({ pseudoId: id.pseudoId, publicKey: id.publicKey });
+    const id = await createIdentity();
+    setGenerated({ pseudoId: id.pseudoId, identityPublicKey: id.identityPublicKey });
     setPhase('done');
   }
 
@@ -90,8 +90,8 @@ export default function Onboarding({ onComplete }: Props) {
                   <div className="identity-label">Callsign ID</div>
                   <div className="identity-value">{generated.pseudoId}</div>
                   
-                  <div className="identity-label">Public Key</div>
-                  <div className="identity-key">{generated.publicKey}</div>
+                  <div className="identity-label">Identity Public Key</div>
+                  <div className="identity-key">{generated.identityPublicKey}</div>
                 </div>
 
                 <button onClick={onComplete} className="app-button primary" style={{ width: '100%' }}>

@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
 import { useIdentityStore } from '../store/identityStore';
+import { createPublicBundle } from '../crypto/identity';
 import { X, Copy, QrCode } from 'lucide-react';
 import { useState } from 'react';
 
@@ -12,14 +13,16 @@ export default function MyProfile({ onClose }: Props) {
 
   if (!identity || !relayToken) return null;
 
+  const publicBundle = createPublicBundle(identity, relayToken);
+
   function copyAll() {
-    const data = JSON.stringify({ pseudoId: identity!.pseudoId, dhPublicKey: identity!.dhPublicKey, relayToken });
+    const data = JSON.stringify(publicBundle);
     navigator.clipboard.writeText(data);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
-  const qrData = JSON.stringify({ pseudoId: identity.pseudoId, dhPublicKey: identity.dhPublicKey, relayToken });
+  const qrData = JSON.stringify(publicBundle);
 
   return (
     <div className="modal-overlay">
@@ -63,11 +66,27 @@ export default function MyProfile({ onClose }: Props) {
             />
           </div>
 
+          <div className="identity-details">
+            <Detail label="Callsign" value={identity.pseudoId} />
+            <Detail label="Relay token" value={relayToken} />
+            <Detail label="Identity key fingerprint" value={identity.identityPublicKey.slice(0, 16)} />
+            <Detail label="Signed prekey fingerprint" value={identity.signedPreKeyPublic.slice(0, 16)} />
+          </div>
+
           <button onClick={copyAll} className="app-button" style={{ width: '100%' }}>
             <Copy /> {copied ? 'Copied Identity' : 'Copy Full Identity JSON'}
           </button>
         </div>
       </motion.div>
+    </div>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="identity-detail-row">
+      <div className="identity-detail-label">{label}</div>
+      <div className="identity-detail-value">{value}</div>
     </div>
   );
 }
