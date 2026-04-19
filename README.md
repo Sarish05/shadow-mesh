@@ -14,6 +14,8 @@ By employing a split-knowledge backend architecture and executing all cryptograp
 
 The architecture strictly separates identity from destination. The Relay server knows the sender's origin but not the destination or content, while the Gateway server knows the destination and logged cryptographic hash but has no knowledge of the sender's identity or message content. 
 
+![Process Flow Diagram](process_flow.png)
+
 ## Key Capabilities & Requirements Fulfilled
 
 *   **Multi-Modal End-to-End Encryption:** Supports secure sharing of text, image, and voice data. All payloads are encrypted locally on the browser using AES-256-GCM before transmission.
