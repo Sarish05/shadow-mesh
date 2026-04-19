@@ -35,6 +35,7 @@ The architecture strictly separates identity from destination. The Relay server 
 ### Backend (Relay & Gateway)
 *   **Core Logic:** Node.js, Express.js, TypeScript
 *   **Transport:** Socket.io (Bidirectional Event Transport)
+*   **Serialization:** Protocol Buffers (`message.proto`) for compact, heavily optimized binary message payloads.
 *   **Storage:** SQLite (Privacy-Preserving Audit Logs), Redis (Fast TTL Offline Queue for Ephemerality)
 
 ### Cryptographic Primitives 
