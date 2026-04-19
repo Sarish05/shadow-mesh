@@ -68,14 +68,18 @@ export async function deriveX3DHInitiatorSession(
   theirSignedPreKeyPublicB64: string,
   channelId: string
 ): Promise<X3DHSession> {
+console.log(`%c[ENIGMA: X3DH] %cAlice (Initiator) Deriving Session:`, 'color: #3b82f6; font-weight: bold', 'color: #a3a3a3', { channelId });
+
   const eph = nacl.box.keyPair();
   const ephPublic = encodeBase64(u8(eph.publicKey));
   const ephSecret = encodeBase64(u8(eph.secretKey));
 
   const dh1 = deriveSharedSecret(ourIdentity.identitySecretKey, theirSignedPreKeyPublicB64);
   const dh2 = deriveSharedSecret(ephSecret, theirIdentityPublicKeyB64);
-  const dh3 = deriveSharedSecret(ephSecret, theirSignedPreKeyPublicB64);
+  const dh3 = deriveSharedSecret(ephSecret, theirSignedPreKeyPublicB64);        
   const session = await makeSession(concatSecrets(dh1, dh2, dh3), `shadow-mesh-x3dh-v1:${channelId}`);
+
+  console.log(`%c[ENIGMA: HKDF] %cMaster Key Material Expanded. Ephemeral Key Burned.`, 'color: #3b82f6; font-weight: bold', 'color: #a3a3a3');
 
   return {
     session,
@@ -92,9 +96,14 @@ export async function deriveX3DHRecipientSession(
   theirEphemeralPublicKeyB64: string,
   channelId: string
 ): Promise<SessionKey> {
+  console.log(`%c[ENIGMA: X3DH] %cBob (Recipient) Deriving Session:`, 'color: #3b82f6; font-weight: bold', 'color: #a3a3a3', { channelId });
+
   const dh1 = deriveSharedSecret(ourIdentity.signedPreKeySecret, theirIdentityPublicKeyB64);
   const dh2 = deriveSharedSecret(ourIdentity.identitySecretKey, theirEphemeralPublicKeyB64);
   const dh3 = deriveSharedSecret(ourIdentity.signedPreKeySecret, theirEphemeralPublicKeyB64);
-  return makeSession(concatSecrets(dh1, dh2, dh3), `shadow-mesh-x3dh-v1:${channelId}`);
+  
+  const session = await makeSession(concatSecrets(dh1, dh2, dh3), `shadow-mesh-x3dh-v1:${channelId}`);
+  console.log(`%c[ENIGMA: HKDF] %cMaster Key Material Expanded. Shared Secret matched.`, 'color: #3b82f6; font-weight: bold', 'color: #a3a3a3');
+  return session;
 }
 

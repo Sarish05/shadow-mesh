@@ -21,14 +21,17 @@ export function useSocket() {
 
     activeConnections++;
     if (!globalSocket) {
+      console.log(`%c[ENIGMA: NETWORK] %cConnecting to Transport Layer (${RELAY_URL})...`, 'color: #eab308; font-weight: bold', 'color: #a3a3a3');
       const socket = io(RELAY_URL, { transports: ['websocket'] });
       globalSocket = socket;
 
       socket.on('connect', () => {
+        console.log(`%c[ENIGMA: NETWORK] %cConnected. Broadcasting Socket Authentication...`, 'color: #eab308; font-weight: bold', 'color: #a3a3a3');
         socket.emit('authenticate', useIdentityStore.getState().relayToken || null);
       });
 
       socket.on('relay:token', (token: string) => {
+        console.log(`%c[ENIGMA: ROUTING] %cReceived Anonymized Routing Token:`, 'color: #c084fc; font-weight: bold', 'color: #a3a3a3', token);
         useIdentityStore.getState().setRelayToken(token);
         fetch('http://localhost:3002/api/identity', {
           method: 'POST',
@@ -46,14 +49,17 @@ export function useSocket() {
         try {
           const { contacts, addMessage, updateMessageStatus } = useChatStore.getState();
           const { addEntry } = useAuditStore.getState();
-          
+
           if (data.action === 'ack') {
             const ackData = data.encryptedBlob as any;
             if (ackData.id) {
                updateMessageStatus(ackData.id, 'delivered');
+               console.log(`%c[ENIGMA: NETWORK] %cReceived Delivery ACK for msg: ${ackData.id.slice(0, 8)}...`, 'color: #eab308; font-weight: bold', 'color: #a3a3a3');
             }
             return;
           }
+
+          console.log(`%c[ENIGMA: NETWORK] %cEncrypted Payload Received from Gateway!`, 'color: #eab308; font-weight: bold', 'color: #a3a3a3', { from: data.senderToken.slice(0, 8) + '...' });
 
           const contact = contacts.find(c => c.relayToken === data.senderToken);
           if (!contact || !identity) return;
@@ -114,6 +120,7 @@ export function useSocket() {
     action: string;
     commitment?: string;
   }) => {
+    console.log(`%c[ENIGMA: NETWORK] %cPushing Ciphertext onto WebSockets...`, 'color: #eab308; font-weight: bold', 'color: #a3a3a3', { destination: packet.recipientToken.slice(0, 8) + '...' });
     globalSocket?.emit('send', packet);
   }, []);
 

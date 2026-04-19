@@ -57,6 +57,7 @@ export async function encryptPayload(
   const commitInput = u8([...iv, ...ciphertext.slice(0, 32)]);
   const commitment = u8(new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, commitInput)));
 
+  console.log(`%c[ENIGMA: CRYPTO] %cAES-256-GCM Encryption Complete:`, 'color: #00ff00; font-weight: bold', 'color: #a3a3a3', { type: contentType, originalSize: payload.length, paddedSize: padded.length, ivB64: encodeBase64(iv).substring(0, 10) + '...' });
   return {
     ciphertext: encodeBase64(ciphertext),
     iv: encodeBase64(iv),
@@ -86,5 +87,10 @@ export async function decryptPayload(
   const data = decrypted.slice(5, 5 + originalLength);
 
   const typeMap: Record<number, ContentType> = { 1: 'text', 2: 'image', 3: 'voice' };
-  return { contentType: typeMap[typeCode] ?? 'text', data };
+  const detectedType = typeMap[typeCode] ?? 'text';
+  
+  console.log(`%c[ENIGMA: CRYPTO] %cAES-256-GCM Decryption Complete:`, 'color: #00ff00; font-weight: bold', 'color: #a3a3a3', { type: detectedType, unpaddedSize: data.length });
+
+  return { contentType: detectedType, data };
 }
+
