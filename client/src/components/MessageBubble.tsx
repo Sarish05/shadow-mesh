@@ -31,10 +31,12 @@ export default function MessageBubble({ msg, onDelete }: Props) {
     <div className={`flex w-full mb-4 group relative ${isMine ? 'justify-end' : 'justify-start'}`}>
       <div className={`flex flex-col gap-1 max-w-[85%] md:max-w-md ${isMine ? 'items-end' : 'items-start'}`}>
 
-        <div className={`rounded-2xl px-4 py-3 text-sm shadow-sm relative ${
+        <div className={`relative shadow-sm ${
           msg.contentType === 'text' 
-            ? (isMine ? 'bg-[var(--primary)] text-white' : 'bg-[var(--bg-surface)] text-[var(--text-primary)]')
-            : 'bg-transparent p-0 shadow-none'
+            ? (isMine 
+                ? 'rounded-2xl px-4 py-2.5 bg-[var(--primary)] text-white' 
+                : 'rounded-2xl px-4 py-2.5 bg-[var(--bg-surface)] text-[var(--text-primary)]')
+            : 'bg-transparent p-0'
         }`}>
 
           {/* Delete Icon */}
@@ -51,7 +53,9 @@ export default function MessageBubble({ msg, onDelete }: Props) {
 
           {/* Text */}
           {msg.contentType === 'text' && (
-            <p className="leading-relaxed whitespace-pre-wrap break-words text-[15px]">{msg.text}</p>
+            <p className="leading-relaxed whitespace-pre-wrap break-words text-[15px] m-0">
+              {msg.text}
+            </p>
           )}
 
           {/* Image */}
