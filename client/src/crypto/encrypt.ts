@@ -38,6 +38,7 @@ export async function encryptPayload(
   payload: Uint8Array,
   ttlMs = 0
 ): Promise<EncryptedPacket> {
+  console.log(`%c[ENIGMA: CRYPTO] %cStarted Payload Encryption...`, 'color: #eab308; font-weight: bold', 'color: #a3a3a3', { contentType, rawSize: payload.length });
   const header = new Uint8Array(5);
   const typeMap: Record<ContentType, number> = { text: 1, image: 2, voice: 3 };
   header[0] = typeMap[contentType];
@@ -48,6 +49,8 @@ export async function encryptPayload(
   combined.set(payload, header.length);
 
   const padded = padToBucket(combined);
+  console.log(`%c[ENIGMA: CRYPTO] %cApplied Traffic Camouflage (Padding):`, 'color: #eab308; font-weight: bold', 'color: #a3a3a3', { original: combined.length, paddedSize: padded.length });
+  
   const iv = u8(nacl.randomBytes(12));
 
   const ciphertext = u8(new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, sessionKey, padded)));
@@ -77,6 +80,8 @@ export async function decryptPayload(
   sessionKey: CryptoKey,
   packet: EncryptedPacket
 ): Promise<DecryptedPayload> {
+  console.log(`%c[ENIGMA: CRYPTO] %cReceived Ciphertext for Decryption:`, 'color: #eab308; font-weight: bold', 'color: #a3a3a3', { encryptedSize: packet.paddedSize });
+  
   const iv = u8(decodeBase64(packet.iv));
   const ciphertext = u8(decodeBase64(packet.ciphertext));
 
